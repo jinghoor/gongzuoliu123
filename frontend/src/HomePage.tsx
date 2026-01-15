@@ -162,8 +162,16 @@ const HomePage = () => {
           edges: payload.edges,
         }),
       });
-      if (!res.ok) throw new Error("Failed to import workflow");
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(errorText || "Failed to import workflow");
+      }
+      const importedWorkflow = await res.json();
       await fetchWorkflows();
+      // 导入成功后，自动打开新创建的工作流
+      if (importedWorkflow && importedWorkflow.id) {
+        navigate(`/workflow/${importedWorkflow.id}`);
+      }
     } catch (err) {
       console.error("Error importing workflow:", err);
       alert("导入失败");

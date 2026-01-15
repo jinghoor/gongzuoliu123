@@ -3666,6 +3666,10 @@ const WorkflowEditor = () => {
           const GRID_X = 250;
           const GRID_Y = 120;
           const loadedNodes = (data.nodes || []).map((n: any, idx: number) => {
+            if (!n || !n.id || !n.type) {
+              console.warn("Invalid node data:", n);
+              return null;
+            }
             const nodeType = n.type;
             const config = n.config || {};
             let inputs = [{ id: "in", label: "Data" }];
@@ -3721,13 +3725,23 @@ const WorkflowEditor = () => {
                 lastImageValues: [],
               },
             };
-          });
+          }).filter((n: any): n is NonNullable<typeof n> => n !== null);
           
           // 转换边，需要根据实际连接的端口来确定handle
-          const loadedEdges = data.edges.map((e: any) => {
+          const loadedEdges = (data.edges || []).map((e: any) => {
+            if (!e || !e.id || !e.source || !e.target) {
+              console.warn("Invalid edge data:", e);
+              return null;
+            }
             // 尝试从边的label或其他信息推断端口，如果没有则使用默认值
             const sourceNode = loadedNodes.find((n: any) => n.id === e.source);
             const targetNode = loadedNodes.find((n: any) => n.id === e.target);
+            
+            // 如果找不到源节点或目标节点，跳过这条边
+            if (!sourceNode || !targetNode) {
+              console.warn(`Edge ${e.id} references missing node: source=${e.source}, target=${e.target}`);
+              return null;
+            }
             
             // 对于text-output和image-output节点，需要根据配置确定端口
             let sourceHandle = "out";
@@ -3771,7 +3785,7 @@ const WorkflowEditor = () => {
               animated: (e as any).animated !== undefined ? (e as any).animated : true,
               style: (e as any).style || { stroke: "#60a5fa" },
             };
-          });
+          }).filter((e: any): e is NonNullable<typeof e> => e !== null);
           
           console.log("Setting nodes:", loadedNodes.length, "edges:", loadedEdges.length);
           setNodes(loadedNodes);
