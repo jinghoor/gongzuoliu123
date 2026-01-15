@@ -485,6 +485,7 @@ const WorkflowEditor = () => {
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<NodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -3641,16 +3642,18 @@ const WorkflowEditor = () => {
     if (id && (!hasLoaded || workflowId !== id)) {
       const loadWorkflow = async () => {
         try {
+          setLoadError(null);
           // 先清空旧状态，避免显示旧数据
           setNodes([]);
           setEdges([]);
           
-          const res = await fetch(`${apiBase}/workflows/${id}`);
+          const res = await fetch(`${apiBase}/workflows/${id}`, { cache: "no-store" });
           if (res.status === 404) {
             // 工作流不存在，清理ID，允许重新保存为新项目
             setWorkflowId(null);
             setWorkflowName("我的可视化工作流");
             setHasLoaded(true);
+            setLoadError("工作流不存在或已被删除");
             return;
           }
           if (!res.ok) throw new Error("Failed to load workflow");
@@ -3661,17 +3664,27 @@ const WorkflowEditor = () => {
           setWorkflowName(data.name || "我的可视化工作流");
           setWorkflowId(data.id);
           setHasLoaded(true);
+          setLoadError(null);
           
           // 转换节点，分配网格位置
           const GRID_X = 250;
           const GRID_Y = 120;
           const loadedNodes = (data.nodes || []).map((n: any, idx: number) => {
-            if (!n || !n.id || !n.type) {
+            if (!n || !n.id) {
               console.warn("Invalid node data:", n);
               return null;
             }
-            const nodeType = n.type;
-            const config = n.config || {};
+            const nodeType =
+              n.type ||
+              n.nodeType ||
+              n.data?.nodeType ||
+              n.data?.type ||
+              n.data?.node_type;
+            if (!nodeType) {
+              console.warn("Missing node type, skipping:", n);
+              return null;
+            }
+            const config = n.config || n.data?.config || {};
             let inputs = [{ id: "in", label: "Data" }];
             let outputs = [{ id: "out", label: "Data" }];
             
@@ -3695,15 +3708,23 @@ const WorkflowEditor = () => {
             }
             
             // 从config中恢复位置，如果没有则使用网格布局
-            const savedPosition = (config.position as { x: number; y: number }) || null;
-            const position = savedPosition || {
-              x: (idx % 4) * GRID_X + 100,
-              y: Math.floor(idx / 4) * GRID_Y + 100,
-            };
+            const savedPosition = (config.position as { x?: number; y?: number }) || null;
+            const fallbackPosition = n.position as { x?: number; y?: number } | undefined;
+            const isValidPosition = (pos?: { x?: number; y?: number }) =>
+              typeof pos?.x === "number" && typeof pos?.y === "number";
+            const position = isValidPosition(savedPosition)
+              ? (savedPosition as { x: number; y: number })
+              : isValidPosition(fallbackPosition)
+              ? (fallbackPosition as { x: number; y: number })
+              : {
+                  x: (idx % 4) * GRID_X + 100,
+                  y: Math.floor(idx / 4) * GRID_Y + 100,
+                };
             
-            // 从config中恢复variant和badge
-            const variant = (config.variant as string) || undefined;
-            const badge = (config.badge as string) || undefined;
+            // 从config或旧数据中恢复variant和badge
+            const variant =
+              (config.variant as string) || (n.data?.variant as string) || undefined;
+            const badge = (config.badge as string) || (n.data?.badge as string) || undefined;
             // 从config中移除variant和badge（它们不应该在config中）
             const { variant: _, badge: __, ...cleanConfig } = config;
             
@@ -3713,7 +3734,7 @@ const WorkflowEditor = () => {
               position,
               data: {
                 nodeType,
-                label: n.name || n.type,
+                label: n.name || n.data?.label || n.data?.name || nodeType,
                 config: cleanConfig,
                 inputs,
                 outputs,
@@ -3798,12 +3819,14 @@ const WorkflowEditor = () => {
           setWorkflowId(null);
           setWorkflowName("我的可视化工作流");
           setHasLoaded(true);
+          setLoadError(err instanceof Error ? err.message : "无法加载工作流");
         }
       };
       loadWorkflow();
     } else if (!id) {
       // 如果从有id的页面导航到无id的页面（新建项目），清空状态
       setHasLoaded(false);
+      setLoadError(null);
       if (workflowId) {
         setNodes([]);
         setEdges([]);
@@ -3848,6 +3871,18 @@ const WorkflowEditor = () => {
         </div>
         <div className="topbar-actions">
           {runMessage && <div className="run-message">{runMessage}</div>}
+          {loadError && (
+            <div
+              className="run-message"
+              style={{
+                color: "#b91c1c",
+                background: "#fef2f2",
+                borderColor: "#fecaca",
+              }}
+            >
+              加载失败：{loadError}
+            </div>
+          )}
           <button className="icon-btn" onClick={() => setShowLogs((v) => !v)}>
             运行日志
           </button>
