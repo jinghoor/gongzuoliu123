@@ -3647,7 +3647,16 @@ const WorkflowEditor = () => {
           setNodes([]);
           setEdges([]);
           
-          const res = await fetch(`${apiBase}/workflows/${id}`, { cache: "no-store" });
+          const loadUrl = new URL(`${apiBase}/workflows/${id}`);
+          // 强制绕过 CDN/浏览器缓存，避免 304 无内容导致空白
+          loadUrl.searchParams.set("_ts", Date.now().toString());
+          const res = await fetch(loadUrl.toString(), {
+            cache: "no-store",
+            headers: {
+              "cache-control": "no-cache",
+              pragma: "no-cache",
+            },
+          });
           if (res.status === 404) {
             // 工作流不存在，清理ID，允许重新保存为新项目
             setWorkflowId(null);
