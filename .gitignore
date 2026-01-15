@@ -1,0 +1,38 @@
+# Dependencies
+node_modules
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build outputs
+/backend/dist
+/frontend/dist
+
+# Data and uploads (包含用户数据，不应提交)
+/backend/data
+/backend/uploads
+data
+uploads
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# OS
+Thumbs.db
+
+# Backup folder
+备份/
