@@ -112,7 +112,7 @@ const createRun = (workflow: WorkflowDefinition, context: Record<string, unknown
 const tryParseJson = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  if (!["{", "[", "\""].includes(trimmed[0])) return null;
+  if (!trimmed[0] || !["{", "[", "\""].includes(trimmed[0])) return null;
   try {
     return JSON.parse(trimmed);
   } catch {
@@ -155,7 +155,7 @@ const getByPath = (obj: any, pathStr: string) => {
     
     // 处理数组索引，如 output[1] 或 content[0]
     const arrayMatch = key.match(/^(.+)\[(\d+)\]$/);
-    if (arrayMatch) {
+    if (arrayMatch && arrayMatch[1] && arrayMatch[2]) {
       const arrayKey = arrayMatch[1];
       const arrayIndex = parseInt(arrayMatch[2], 10);
       
@@ -1147,6 +1147,7 @@ const executeNode = async (
         if (isDoubao || !contentType.includes("text/event-stream")) {
           // 非流式响应（Doubao 或标准非流式）
           const data = await res.json();
+          const dataAny = data as any;
           if (isDoubao) {
             // Doubao 响应格式：尝试多种可能的字段路径
             // 可能的格式：
@@ -1158,16 +1159,16 @@ const executeNode = async (
             let extractedText: unknown = undefined;
             
             // 尝试各种可能的路径
-            if (data.output) {
-              if (typeof data.output === "string") {
-                extractedText = data.output;
-              } else if (data.output.text) {
-                extractedText = data.output.text;
-              } else if (data.output.content) {
-                extractedText = data.output.content;
-              } else if (Array.isArray(data.output) && data.output.length > 0) {
+            if (dataAny.output) {
+              if (typeof dataAny.output === "string") {
+                extractedText = dataAny.output;
+              } else if (dataAny.output.text) {
+                extractedText = dataAny.output.text;
+              } else if (dataAny.output.content) {
+                extractedText = dataAny.output.content;
+              } else if (Array.isArray(dataAny.output) && dataAny.output.length > 0) {
                 // 如果 output 是数组，尝试找到 type: "message" 的元素
-                for (const item of data.output) {
+                for (const item of dataAny.output) {
                   if (item?.type === "message" && Array.isArray(item.content)) {
                     // 在 content 数组中查找 type: "output_text" 的元素
                     for (const contentItem of item.content) {
@@ -1186,7 +1187,7 @@ const executeNode = async (
                 }
                 // 如果还没找到，尝试取第一个元素的文本
                 if (extractedText === undefined) {
-                  const first = data.output[0];
+                  const first = dataAny.output[0];
                   if (typeof first === "string") {
                     extractedText = first;
                   } else if (first?.text) {
@@ -1209,18 +1210,18 @@ const executeNode = async (
             
             // 如果还没找到，尝试其他字段
             if (extractedText === undefined) {
-              extractedText = data.text || data.content || data.message;
+              extractedText = dataAny.text || dataAny.content || dataAny.message;
             }
             
             // 如果还是没找到，尝试 response 字段
-            if (extractedText === undefined && data.response) {
-              if (typeof data.response === "string") {
-                extractedText = data.response;
-              } else if (data.response.output) {
-                if (typeof data.response.output === "string") {
-                  extractedText = data.response.output;
-                } else if (data.response.output.text) {
-                  extractedText = data.response.output.text;
+            if (extractedText === undefined && dataAny.response) {
+              if (typeof dataAny.response === "string") {
+                extractedText = dataAny.response;
+              } else if (dataAny.response.output) {
+                if (typeof dataAny.response.output === "string") {
+                  extractedText = dataAny.response.output;
+                } else if (dataAny.response.output.text) {
+                  extractedText = dataAny.response.output.text;
                 }
               }
             }
@@ -1234,14 +1235,15 @@ const executeNode = async (
               }
             } else {
               // 保存完整响应以便调试，同时尝试提取任何可能的文本字段
-              logRun(run, "info", `[${node.name}] Doubao response structure: ${JSON.stringify(Object.keys(data))}`);
+              logRun(run, "info", `[${node.name}] Doubao response structure: ${JSON.stringify(Object.keys(dataAny as object))}`);
               // 如果 data.text 是字符串化的 JSON，尝试解析并提取
-              if (data.text && typeof data.text === "string") {
-                const parsedText = tryParseJson(data.text);
+              if (dataAny.text && typeof dataAny.text === "string") {
+                const parsedText = tryParseJson(dataAny.text);
                 if (parsedText && typeof parsedText === "object") {
                   // 尝试从解析后的对象中提取文本
-                  if (Array.isArray(parsedText.output)) {
-                    for (const item of parsedText.output) {
+                  const parsedAny = parsedText as any;
+                  if (Array.isArray(parsedAny.output)) {
+                    for (const item of parsedAny.output) {
                       if (item?.type === "message" && Array.isArray(item.content)) {
                         for (const contentItem of item.content) {
                           if (contentItem?.type === "output_text" && contentItem.text) {
@@ -1263,11 +1265,11 @@ const executeNode = async (
             }
             
             // 如果是 Doubao-Seed-1.8，分离 Thinking 和 Answer
-            if (isDoubaoSeed && Array.isArray(data.output)) {
+            if (isDoubaoSeed && Array.isArray(dataAny.output)) {
               let thinkingText = "";
               let answerText = "";
               
-              for (const item of data.output) {
+              for (const item of dataAny.output) {
                 if (item?.type === "reasoning") {
                   // 提取思考过程
                   // summary 是数组，包含 { type: "summary_text", text: "..." }
@@ -1337,7 +1339,7 @@ const executeNode = async (
             }
           } else {
             // 标准非流式响应
-            fullText = data.choices?.[0]?.message?.content || data.content || JSON.stringify(data);
+            fullText = dataAny.choices?.[0]?.message?.content || dataAny.content || JSON.stringify(dataAny);
             if (typeof fullText !== "string") {
               fullText = JSON.stringify(fullText);
             }
@@ -1685,10 +1687,12 @@ app.delete("/workflows/:id", (req, res) => {
   workflows.splice(idx, 1);
   saveWorkflows();
   // 取消相关的定时任务和webhook
-  const schedules = scheduleMap.get(workflow.id);
-  if (schedules) {
-    schedules.forEach((timeout) => clearTimeout(timeout));
-    scheduleMap.delete(workflow.id);
+  if (workflow) {
+    const schedules = scheduleMap.get(workflow.id);
+    if (schedules) {
+      schedules.forEach((timeout) => clearTimeout(timeout));
+      scheduleMap.delete(workflow.id);
+    }
   }
   rebuildWebhookMap();
   res.json({ message: "workflow deleted", id: req.params.id });
