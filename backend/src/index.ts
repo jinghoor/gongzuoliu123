@@ -1822,6 +1822,11 @@ if (fs.existsSync(frontendDist)) {
   app.use((_req, res) => {
     res.sendFile(path.join(frontendDist, "index.html"));
   });
+} else {
+  // 如果没有前端静态文件，提供 API 根路径响应（用于健康检查）
+  app.get("/", (_req, res) => {
+    res.json({ status: "ok", service: "cross-border-workflow-api", uptime: process.uptime() });
+  });
 }
 
 app.use((err: Error, _req: Request, res: Response, _next: () => void) => {
@@ -1829,6 +1834,6 @@ app.use((err: Error, _req: Request, res: Response, _next: () => void) => {
   res.status(500).json({ message: "Internal server error", detail: err.message });
 });
 
-app.listen(PORT, () => {
-  console.log(`[api] listening on http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`[api] listening on http://0.0.0.0:${PORT}`);
 });
