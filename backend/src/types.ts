@@ -2,6 +2,7 @@ export type NodeType =
   | "llm"
   | "llm-file"
   | "llm-generic"
+  | "doubao-1-8"
   | "llm-claude"
   | "text"
   | "http"

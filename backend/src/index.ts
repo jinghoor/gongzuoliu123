@@ -967,6 +967,7 @@ const executeNode = async (
     case "llm":
     case "llm-file":
     case "llm-generic":
+    case "doubao-1-8":
     case "llm-claude": {
       const basePrompt = applyTemplate((effectiveConfig.prompt as string) || "", context);
       const rawBaseURL = (effectiveConfig.baseURL as string) || "https://api.openai.com/v1";
@@ -974,6 +975,7 @@ const executeNode = async (
       const model = (effectiveConfig.model as string) || "gpt-4o-mini";
       const apiKey =
         (effectiveConfig.apiKey as string) ||
+        (isDoubao ? process.env.DOUBAO_API_KEY : undefined) ||
         process.env.OPENAI_API_KEY ||
         process.env.DEFAULT_OPENAI_KEY;
 

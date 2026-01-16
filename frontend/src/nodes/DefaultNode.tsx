@@ -157,7 +157,7 @@ function DefaultNode(props: NodeProps<NodeData>) {
   const hasTextOutput = data.nodeType === "text-output";
   const hasImageOutput = data.nodeType === "image-output";
   const hasImageInput = data.nodeType === "image-input";
-  const isLLM = ["llm", "llm-file", "llm-generic"].includes(data.nodeType);
+  const isLLM = ["llm", "llm-file", "llm-generic", "doubao-1-8"].includes(data.nodeType);
   // 检测是否是 Doubao-Seed-1.8 模型（需要分离显示 Thinking 和 Answer）
   const model = String(data.config?.model || "");
   const isDoubaoSeed = isLLM && /doubao-seed-1-8/i.test(model);

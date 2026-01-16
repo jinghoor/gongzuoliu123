@@ -68,6 +68,12 @@ const palette: PaletteSection[] = [
     title: "AI",
     items: [
       { type: "llm-generic", name: "通用LLM大模型", detail: "支持多种大模型 API", badge: "AI" },
+      {
+        type: "doubao-1-8",
+        name: "豆包1.8多模态模型",
+        detail: "Doubao Seed 1.8 多模态",
+        badge: "AI",
+      },
       { type: "image-placeholder", name: "图像生成", detail: "占位节点", badge: "IMG", placeholder: true },
     ],
   },
@@ -103,6 +109,13 @@ const defaultConfigByType: Record<string, Record<string, unknown>> = {
     prompt: "Hello {{user}}",
     model: "gpt-4o-mini",
     baseURL: "https://api.openai.com/v1",
+    inputSources: [{ mode: "source", format: "text", sourcePath: "", defaultValue: "", inputLabel: "Input 1" }],
+    outputPath: "vars.llm.text",
+  },
+  "doubao-1-8": {
+    prompt: "Hello {{user}}",
+    model: "doubao-seed-1-8-251228",
+    baseURL: "https://ark.cn-beijing.volces.com/api/v3",
     inputSources: [{ mode: "source", format: "text", sourcePath: "", defaultValue: "", inputLabel: "Input 1" }],
     outputPath: "vars.llm.text",
   },
@@ -727,6 +740,7 @@ const WorkflowEditor = () => {
       case "llm":
       case "llm-file":
       case "llm-generic":
+      case "doubao-1-8":
         inputs = [{ id: "input-0", label: "Input 1" }];
         // 默认输出端口，如果配置了 Doubao-Seed-1.8 模型，会在 useEffect 中自动更新
         outputs = [
@@ -898,7 +912,9 @@ const WorkflowEditor = () => {
               };
             }
             // 处理 LLM 节点
-            const isLLM = ["llm", "llm-file", "llm-generic"].includes(n.data.nodeType);
+            const isLLM = ["llm", "llm-file", "llm-generic", "doubao-1-8"].includes(
+              n.data.nodeType,
+            );
             if (isLLM && targetPort.startsWith("input-")) {
               const idx = Number(targetPort.replace("in-input-", ""));
               if (!Number.isNaN(idx)) {
@@ -1833,7 +1849,9 @@ const WorkflowEditor = () => {
           };
         }
         // 对于 LLM 节点，支持流式输出，不限制字符长度
-        const isLLM = ["llm", "llm-file", "llm-generic"].includes(n.data.nodeType);
+        const isLLM = ["llm", "llm-file", "llm-generic", "doubao-1-8"].includes(
+          n.data.nodeType,
+        );
         if (isLLM) {
           const model = String(n.data.config?.model || "");
           const isDoubaoSeed = /doubao-seed-1-8/i.test(model);
@@ -1884,7 +1902,9 @@ const WorkflowEditor = () => {
       let changed = false;
       const next = nds.map((n) => {
         // 处理 LLM 节点的 inputSources 和输出端口
-        const isLLM = ["llm", "llm-file", "llm-generic"].includes(n.data.nodeType);
+        const isLLM = ["llm", "llm-file", "llm-generic", "doubao-1-8"].includes(
+          n.data.nodeType,
+        );
         if (isLLM) {
           // 检测模型配置，动态更新输出端口
           const model = String(n.data.config?.model || "");
@@ -2209,7 +2229,9 @@ const WorkflowEditor = () => {
         const newConfig = { ...(n.data.config || {}), [key]: value };
         
         // 如果是 LLM 节点且修改了 model 字段，动态更新输出端口
-        const isLLM = ["llm", "llm-file", "llm-generic"].includes(n.data.nodeType);
+        const isLLM = ["llm", "llm-file", "llm-generic", "doubao-1-8"].includes(
+          n.data.nodeType,
+        );
         if (isLLM && key === "model") {
           const model = String(value || "");
           const isDoubaoSeed = /doubao-seed-1-8/i.test(model);
@@ -2371,7 +2393,7 @@ const WorkflowEditor = () => {
     if (!selectedNode) return <div className="panel-text">选择节点以编辑配置</div>;
     const type = selectedNode.data.nodeType as string;
     const cfg = selectedNode.data.config || {};
-        const isLLM = ["llm", "llm-file", "llm-generic"].includes(type);
+        const isLLM = ["llm", "llm-file", "llm-generic", "doubao-1-8"].includes(type);
 
     return (
       <div className="form">
@@ -2771,7 +2793,9 @@ const WorkflowEditor = () => {
     if (!selectedNode) return null;
     const cfg = selectedNode.data.config || {};
     const inputs = selectedNode.data.inputs || [];
-    const isLLM = ["llm", "llm-file", "llm-generic"].includes(selectedNode.data.nodeType);
+    const isLLM = ["llm", "llm-file", "llm-generic", "doubao-1-8"].includes(
+      selectedNode.data.nodeType,
+    );
 
     if (isLLM) {
       const sources = (cfg.inputSources as Array<Record<string, any>>) || [];
@@ -3488,7 +3512,7 @@ const WorkflowEditor = () => {
             </div>
           );
         })}
-        {["llm", "llm-file", "llm-generic"].includes(
+        {["llm", "llm-file", "llm-generic", "doubao-1-8"].includes(
           selectedNode.data.nodeType,
         ) && (
           <div className="upload-block">
@@ -3809,7 +3833,9 @@ const WorkflowEditor = () => {
                 targetHandle = inputs[0].id;
               }
               // 检查是否是LLM节点的input端口
-              const isLLM = ["llm", "llm-file", "llm-generic"].includes(targetNode.data.nodeType);
+              const isLLM = ["llm", "llm-file", "llm-generic", "doubao-1-8"].includes(
+                targetNode.data.nodeType,
+              );
               if (isLLM) {
                 // LLM节点使用input-0, input-1等
                 const sources = (targetNode.data.config?.inputSources as Array<Record<string, any>>) || [];
