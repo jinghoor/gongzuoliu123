@@ -3647,16 +3647,25 @@ const WorkflowEditor = () => {
           setNodes([]);
           setEdges([]);
           
-          const loadUrl = new URL(`${apiBase}/workflows/${id}`);
-          // 强制绕过 CDN/浏览器缓存，避免 304 无内容导致空白
-          loadUrl.searchParams.set("_ts", Date.now().toString());
-          const res = await fetch(loadUrl.toString(), {
-            cache: "no-store",
-            headers: {
-              "cache-control": "no-cache",
-              pragma: "no-cache",
-            },
-          });
+          const fetchWorkflow = async (cacheMode: RequestCache) => {
+            const loadUrl = new URL(`${apiBase}/workflows/${id}`);
+            // 强制绕过 CDN/浏览器缓存，避免 304 无内容导致空白
+            loadUrl.searchParams.set("_ts", Date.now().toString());
+            return fetch(loadUrl.toString(), {
+              cache: cacheMode,
+              headers: {
+                "cache-control": "no-cache, no-store, must-revalidate",
+                pragma: "no-cache",
+                expires: "0",
+              },
+            });
+          };
+
+          let res = await fetchWorkflow("no-store");
+          if (res.status === 304) {
+            // 304 没有响应体，重试一次强制刷新缓存
+            res = await fetchWorkflow("reload");
+          }
           if (res.status === 404) {
             // 工作流不存在，清理ID，允许重新保存为新项目
             setWorkflowId(null);
