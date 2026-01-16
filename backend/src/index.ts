@@ -57,6 +57,13 @@ const webhookMap = new Map<string, string[]>();
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
+// 禁用缓存，避免浏览器/代理返回 304 导致前端使用旧数据
+app.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  next();
+});
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
