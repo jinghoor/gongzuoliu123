@@ -19,6 +19,13 @@ import DefaultNode from "./nodes/DefaultNode";
 import type { NodeData } from "./nodes/DefaultNode";
 import HomePage from "./HomePage";
 import AllProjectsPage from "./AllProjectsPage";
+import LoginPage from "./LoginPage";
+import RegisterPage from "./RegisterPage";
+import ProfilePage from "./ProfilePage";
+import AdminPage from "./AdminPage";
+import ProtectedRoute from "./ProtectedRoute";
+import { apiBase, apiFetch } from "./api";
+import { useAuth } from "./auth";
 
 type PaletteItem = {
   type: string;
@@ -157,7 +164,6 @@ const defaultConfigByType: Record<string, Record<string, unknown>> = {
   merge: {},
 };
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:1888";
 const tabs = [
   { id: "config", label: "配置" },
   { id: "input", label: "输入" },
@@ -479,6 +485,7 @@ const Guidelines = ({ x, y }: GuidelinesState) => {
 
 const WorkflowEditor = () => {
   const navigate = useNavigate();
+  const { setUser } = useAuth();
   const { id } = useParams<{ id?: string }>();
   const nodeTypes = useMemo<NodeTypes>(() => ({ default: DefaultNode }), []);
   const [workflowName, setWorkflowName] = useState("我的可视化工作流");
@@ -1144,8 +1151,8 @@ const WorkflowEditor = () => {
       const formData = new FormData();
       formData.append('files', blob, `thumbnail-${Date.now()}.png`);
       
-      const uploadRes = await fetch(`${apiBase}/uploads`, {
-        method: 'POST',
+      const uploadRes = await apiFetch("/uploads", {
+        method: "POST",
         body: formData,
       });
 
@@ -1201,9 +1208,8 @@ const WorkflowEditor = () => {
         ...(thumbnailUrl ? { thumbnail: thumbnailUrl } : {}),
       };
       const saveOnce = async (useId: string | null) => {
-        const res = await fetch(`${apiBase}/workflows${useId ? `/${useId}` : ""}`, {
+        const res = await apiFetch(`/workflows${useId ? `/${useId}` : ""}`, {
           method: useId ? "PUT" : "POST",
-          headers: { "content-type": "application/json" },
           body: JSON.stringify(payload),
         });
         return res;
@@ -1267,12 +1273,11 @@ const WorkflowEditor = () => {
     // 如果工作流已保存，更新名称
     if (workflowId) {
       try {
-        const res = await fetch(`${apiBase}/workflows/${workflowId}`);
+        const res = await apiFetch(`/workflows/${workflowId}`);
         if (!res.ok) return;
         const workflow = await res.json();
-        await fetch(`${apiBase}/workflows/${workflowId}`, {
+        await apiFetch(`/workflows/${workflowId}`, {
           method: "PUT",
-          headers: { "content-type": "application/json" },
           body: JSON.stringify({
             name: trimmed,
             nodes: workflow.nodes,
@@ -1673,9 +1678,8 @@ const WorkflowEditor = () => {
     if (!selectedNode) return;
     setNodeRunResult("运行中...");
     try {
-      const res = await fetch(`${apiBase}/nodes/run`, {
+      const res = await apiFetch("/nodes/run", {
         method: "POST",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           node: {
             id: selectedNode.id,
@@ -1688,6 +1692,9 @@ const WorkflowEditor = () => {
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
+      if (typeof data.credits === "number") {
+        setUser((prev) => (prev ? { ...prev, credits: data.credits } : prev));
+      }
       const outputText = JSON.stringify(data.outputs || data.context || {}, null, 2);
       setNodeRunResult(outputText);
       setNodes((nds) =>
@@ -1712,9 +1719,8 @@ const WorkflowEditor = () => {
     );
     try {
       const id = await handleSave({ silent: true });
-      const res = await fetch(`${apiBase}/workflows/${id}/run`, {
+      const res = await apiFetch(`/workflows/${id}/run`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({ context: {} }),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -1722,6 +1728,9 @@ const WorkflowEditor = () => {
       setRunId(data.runId);
       setRunStatus(data.status);
       setRunMessage(`运行已提交: ${data.runId}`);
+      if (typeof data.credits === "number") {
+        setUser((prev) => (prev ? { ...prev, credits: data.credits } : prev));
+      }
     } catch (err: any) {
       setRunMessage(`运行失败: ${err.message}`);
     } finally {
@@ -1731,7 +1740,7 @@ const WorkflowEditor = () => {
 
   const pollRun = useCallback(async (id: string) => {
     try {
-      const res = await fetch(`${apiBase}/runs/${id}/logs`);
+      const res = await apiFetch(`/runs/${id}/logs`);
       if (!res.ok) return;
       const data = await res.json();
       setRunLogs(data.logs || []);
@@ -2256,7 +2265,7 @@ const WorkflowEditor = () => {
     if (!files || files.length === 0) return;
     const form = new FormData();
     Array.from(files).forEach((f) => form.append("files", f));
-    const res = await fetch(`${apiBase}/uploads`, { method: "POST", body: form });
+    const res = await apiFetch("/uploads", { method: "POST", body: form });
     if (!res.ok) {
       alert("上传失败");
       return;
@@ -2308,7 +2317,7 @@ const WorkflowEditor = () => {
       e.preventDefault();
       const form = new FormData();
       imageFiles.forEach((f) => form.append("files", f));
-      const res = await fetch(`${apiBase}/uploads`, { method: "POST", body: form });
+      const res = await apiFetch("/uploads", { method: "POST", body: form });
       if (!res.ok) {
         alert("粘贴图片上传失败");
         return;
@@ -3651,7 +3660,7 @@ const WorkflowEditor = () => {
             const loadUrl = new URL(`${apiBase}/workflows/${id}`);
             // 强制绕过 CDN/浏览器缓存，避免 304 无内容导致空白
             loadUrl.searchParams.set("_ts", Date.now().toString());
-            return fetch(loadUrl.toString(), {
+            return apiFetch(loadUrl.toString(), {
               cache: cacheMode,
               headers: {
                 "cache-control": "no-cache, no-store, must-revalidate",
@@ -4070,10 +4079,56 @@ const App = () => {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/projects" element={<AllProjectsPage />} />
-        <Route path="/workflow" element={<WorkflowEditor />} />
-        <Route path="/workflow/:id" element={<WorkflowEditor />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <HomePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects"
+          element={
+            <ProtectedRoute>
+              <AllProjectsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/workflow"
+          element={
+            <ProtectedRoute>
+              <WorkflowEditor />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/workflow/:id"
+          element={
+            <ProtectedRoute>
+              <WorkflowEditor />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <ProfilePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute>
+              <AdminPage />
+            </ProtectedRoute>
+          }
+        />
       </Routes>
     </BrowserRouter>
   );

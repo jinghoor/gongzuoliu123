@@ -1,11 +1,16 @@
 import cors from "cors";
+import crypto from "crypto";
 import express, { Request, Response } from "express";
 import multer from "multer";
 import fs from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import {
+  CreditLog,
   ProviderConfig,
+  Session,
+  User,
+  UserRole,
   WorkflowDefinition,
   WorkflowEdge,
   WorkflowNode,
@@ -20,6 +25,9 @@ const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 const WORKFLOWS_FILE = path.join(DATA_DIR, "workflows.json");
 const RUNS_FILE = path.join(DATA_DIR, "runs.json");
 const PROVIDERS_FILE = path.join(DATA_DIR, "providers.json");
+const USERS_FILE = path.join(DATA_DIR, "users.json");
+const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
+const CREDIT_LOGS_FILE = path.join(DATA_DIR, "credit_logs.json");
 
 const ensureDir = (dir: string) => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -46,10 +54,16 @@ const writeJson = (file: string, data: unknown) => {
 let workflows: WorkflowDefinition[] = readJson(WORKFLOWS_FILE, []);
 let runs: WorkflowRun[] = readJson(RUNS_FILE, []);
 let providers: ProviderConfig[] = readJson(PROVIDERS_FILE, []);
+let users: User[] = readJson(USERS_FILE, []);
+let sessions: Session[] = readJson(SESSIONS_FILE, []);
+let creditLogs: CreditLog[] = readJson(CREDIT_LOGS_FILE, []);
 
 const saveWorkflows = () => writeJson(WORKFLOWS_FILE, workflows);
 const saveRuns = () => writeJson(RUNS_FILE, runs);
 const saveProviders = () => writeJson(PROVIDERS_FILE, providers);
+const saveUsers = () => writeJson(USERS_FILE, users);
+const saveSessions = () => writeJson(SESSIONS_FILE, sessions);
+const saveCreditLogs = () => writeJson(CREDIT_LOGS_FILE, creditLogs);
 
 const scheduleMap = new Map<string, NodeJS.Timeout[]>();
 const webhookMap = new Map<string, string[]>();
@@ -64,6 +78,78 @@ app.use((_req, res, next) => {
   res.setHeader("Expires", "0");
   next();
 });
+
+type AuthRequest = Request & { user?: User };
+
+const normalizeEmail = (email: string) => email.trim().toLowerCase();
+
+const createPasswordHash = (password: string) => {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto
+    .pbkdf2Sync(password, salt, 120000, 64, "sha512")
+    .toString("hex");
+  return { salt, hash };
+};
+
+const verifyPassword = (password: string, salt: string, hash: string) => {
+  const nextHash = crypto
+    .pbkdf2Sync(password, salt, 120000, 64, "sha512")
+    .toString("hex");
+  return crypto.timingSafeEqual(Buffer.from(nextHash, "hex"), Buffer.from(hash, "hex"));
+};
+
+const createToken = () => crypto.randomBytes(24).toString("hex");
+
+const sanitizeUser = (user: User) => ({
+  id: user.id,
+  username: user.username,
+  email: user.email,
+  role: user.role,
+  credits: user.credits,
+  usedCredits: user.usedCredits,
+  profile: user.profile,
+  createdAt: user.createdAt,
+  updatedAt: user.updatedAt,
+});
+
+const findUserByIdentifier = (identifier: string) => {
+  const normalized = identifier.includes("@")
+    ? normalizeEmail(identifier)
+    : identifier.trim();
+  return users.find((u) =>
+    identifier.includes("@") ? normalizeEmail(u.email) === normalized : u.username === normalized,
+  );
+};
+
+const getUserFromRequest = (req: Request) => {
+  const auth = req.header("authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (!token) return undefined;
+  const session = sessions.find((s) => s.token === token);
+  if (!session) return undefined;
+  const user = users.find((u) => u.id === session.userId);
+  if (!user) return undefined;
+  session.lastUsedAt = new Date().toISOString();
+  return user;
+};
+
+const requireAuth = (req: AuthRequest, res: Response, next: () => void) => {
+  const user = getUserFromRequest(req);
+  if (!user) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+  req.user = user;
+  next();
+};
+
+const requireAdmin = (req: AuthRequest, res: Response, next: () => void) => {
+  if (!req.user || req.user.role !== "admin") {
+    res.status(403).json({ message: "Forbidden" });
+    return;
+  }
+  next();
+};
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
@@ -94,11 +180,16 @@ const formatBeijingTime = (isoString: string) => {
   });
 };
 
-const createRun = (workflow: WorkflowDefinition, context: Record<string, unknown>) => {
+const createRun = (
+  workflow: WorkflowDefinition,
+  context: Record<string, unknown>,
+  ownerId: string,
+) => {
   const now = new Date().toISOString();
   const run: WorkflowRun = {
     id: uuidv4(),
     workflowId: workflow.id,
+    ownerId,
     status: "queued",
     context,
     logs: [{ ts: now, level: "info", message: "Run queued" }],
@@ -447,6 +538,8 @@ const registerSchedules = (workflow: WorkflowDefinition) => {
       const intervalSeconds = Number(node.config?.intervalSeconds || 0);
       if (!intervalSeconds || intervalSeconds < 5) return;
       const timer = setInterval(() => {
+        if (!workflow.ownerId) return;
+        if (!consumeCredit(workflow.ownerId, "定时触发")) return;
         const context = {
           trigger: {
             type: "cron",
@@ -455,7 +548,7 @@ const registerSchedules = (workflow: WorkflowDefinition) => {
             intervalSeconds,
           },
         };
-        createRun(workflow, context);
+        createRun(workflow, context, workflow.ownerId);
       }, intervalSeconds * 1000);
       timers.push(timer);
     });
@@ -1612,6 +1705,33 @@ const executeWorkflow = async (workflow: WorkflowDefinition, run: WorkflowRun) =
   saveRuns();
 };
 
+const addCreditLog = (user: User, type: "consume" | "admin_add", amount: number, reason: string) => {
+  const now = new Date().toISOString();
+  const log: CreditLog = {
+    id: uuidv4(),
+    userId: user.id,
+    type,
+    amount,
+    reason,
+    balanceAfter: user.credits,
+    createdAt: now,
+  };
+  creditLogs.push(log);
+  saveCreditLogs();
+};
+
+const consumeCredit = (userId: string, reason: string) => {
+  const user = users.find((u) => u.id === userId);
+  if (!user) return false;
+  if (user.credits < 1) return false;
+  user.credits -= 1;
+  user.usedCredits += 1;
+  user.updatedAt = new Date().toISOString();
+  saveUsers();
+  addCreditLog(user, "consume", -1, reason);
+  return true;
+};
+
 // Initialize triggers from persisted workflows
 workflows.forEach((wf) => registerSchedules(wf));
 rebuildWebhookMap();
@@ -1620,11 +1740,166 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });
 });
 
-app.get("/workflows", (_req, res) => {
-  res.json({ items: workflows });
+app.post("/auth/register", (req, res) => {
+  const { username, email, password } = req.body || {};
+  if (!username || !email || !password) {
+    return res.status(400).json({ message: "username, email, password are required" });
+  }
+  const trimmedName = String(username).trim();
+  const normalizedEmail = normalizeEmail(String(email));
+  if (!trimmedName || !normalizedEmail || String(password).length < 6) {
+    return res.status(400).json({ message: "Invalid registration data" });
+  }
+  if (users.some((u) => u.username === trimmedName)) {
+    return res.status(409).json({ message: "username already exists" });
+  }
+  if (users.some((u) => normalizeEmail(u.email) === normalizedEmail)) {
+    return res.status(409).json({ message: "email already exists" });
+  }
+  const { salt, hash } = createPasswordHash(String(password));
+  const now = new Date().toISOString();
+  const role: UserRole = users.length === 0 ? "admin" : "user";
+  const user: User = {
+    id: uuidv4(),
+    username: trimmedName,
+    email: normalizedEmail,
+    passwordHash: hash,
+    passwordSalt: salt,
+    role,
+    credits: 10000,
+    usedCredits: 0,
+    profile: {},
+    createdAt: now,
+    updatedAt: now,
+  };
+  users.push(user);
+  saveUsers();
+  const token = createToken();
+  sessions.push({ token, userId: user.id, createdAt: now, lastUsedAt: now });
+  saveSessions();
+  res.status(201).json({ token, user: sanitizeUser(user) });
 });
 
-app.post("/workflows", (req, res) => {
+app.post("/auth/login", (req, res) => {
+  const { identifier, password } = req.body || {};
+  if (!identifier || !password) {
+    return res.status(400).json({ message: "identifier and password are required" });
+  }
+  const user = findUserByIdentifier(String(identifier));
+  if (!user || !verifyPassword(String(password), user.passwordSalt, user.passwordHash)) {
+    return res.status(401).json({ message: "Invalid credentials" });
+  }
+  const now = new Date().toISOString();
+  const token = createToken();
+  sessions.push({ token, userId: user.id, createdAt: now, lastUsedAt: now });
+  saveSessions();
+  res.json({ token, user: sanitizeUser(user) });
+});
+
+app.get("/auth/me", requireAuth, (req: AuthRequest, res) => {
+  res.json({ user: sanitizeUser(req.user!) });
+});
+
+app.post("/auth/logout", requireAuth, (req: AuthRequest, res) => {
+  const auth = req.header("authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (token) {
+    sessions = sessions.filter((s) => s.token !== token);
+    saveSessions();
+  }
+  res.json({ ok: true });
+});
+
+app.put("/users/me", requireAuth, (req: AuthRequest, res) => {
+  const { username, avatarUrl, bio } = req.body || {};
+  const user = req.user!;
+  if (username) {
+    const trimmed = String(username).trim();
+    if (!trimmed) return res.status(400).json({ message: "username cannot be empty" });
+    if (users.some((u) => u.username === trimmed && u.id !== user.id)) {
+      return res.status(409).json({ message: "username already exists" });
+    }
+    user.username = trimmed;
+  }
+  user.profile = {
+    ...user.profile,
+    ...(avatarUrl !== undefined ? { avatarUrl: String(avatarUrl) } : {}),
+    ...(bio !== undefined ? { bio: String(bio) } : {}),
+  };
+  user.updatedAt = new Date().toISOString();
+  saveUsers();
+  res.json({ user: sanitizeUser(user) });
+});
+
+app.put("/users/me/password", requireAuth, (req: AuthRequest, res) => {
+  const { currentPassword, nextPassword } = req.body || {};
+  const user = req.user!;
+  if (!currentPassword || !nextPassword) {
+    return res.status(400).json({ message: "currentPassword and nextPassword are required" });
+  }
+  if (!verifyPassword(String(currentPassword), user.passwordSalt, user.passwordHash)) {
+    return res.status(400).json({ message: "current password incorrect" });
+  }
+  if (String(nextPassword).length < 6) {
+    return res.status(400).json({ message: "password too short" });
+  }
+  const { salt, hash } = createPasswordHash(String(nextPassword));
+  user.passwordSalt = salt;
+  user.passwordHash = hash;
+  user.updatedAt = new Date().toISOString();
+  saveUsers();
+  res.json({ ok: true });
+});
+
+app.get("/users/me/credits/logs", requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
+  const logs = creditLogs.filter((log) => log.userId === user.id);
+  res.json({ items: logs });
+});
+
+app.get("/admin/users", requireAuth, requireAdmin, (_req, res) => {
+  res.json({ items: users.map((u) => sanitizeUser(u)) });
+});
+
+app.post("/admin/users/:id/credits", requireAuth, requireAdmin, (req, res) => {
+  const { amount, reason } = req.body || {};
+  const delta = Number(amount);
+  if (!Number.isFinite(delta) || delta <= 0) {
+    return res.status(400).json({ message: "amount must be > 0" });
+  }
+  const user = users.find((u) => u.id === req.params.id);
+  if (!user) return res.status(404).json({ message: "user not found" });
+  user.credits += delta;
+  user.updatedAt = new Date().toISOString();
+  saveUsers();
+  addCreditLog(user, "admin_add", delta, String(reason || "管理员加分"));
+  res.json({ user: sanitizeUser(user) });
+});
+
+app.post("/admin/users/:id/role", requireAuth, requireAdmin, (req, res) => {
+  const { role } = req.body || {};
+  if (role !== "admin" && role !== "user") {
+    return res.status(400).json({ message: "role must be admin or user" });
+  }
+  const user = users.find((u) => u.id === req.params.id);
+  if (!user) return res.status(404).json({ message: "user not found" });
+  user.role = role;
+  user.updatedAt = new Date().toISOString();
+  saveUsers();
+  res.json({ user: sanitizeUser(user) });
+});
+
+app.get("/workflows", requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
+  const items =
+    user.role === "admin"
+      ? workflows
+      : workflows.filter((wf) => wf.ownerId === user.id);
+  res.json({ items });
+});
+
+app.post("/workflows", requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
   const { name, nodes, edges, thumbnail } = req.body;
   if (!name || !Array.isArray(nodes) || !Array.isArray(edges)) {
     return res
@@ -1637,6 +1912,7 @@ app.post("/workflows", (req, res) => {
     id: uuidv4(),
     name,
     version: 1,
+    ownerId: user.id,
     nodes,
     edges,
     ...(thumbnail ? { thumbnail } : {}),
@@ -1650,7 +1926,8 @@ app.post("/workflows", (req, res) => {
   res.status(201).json(workflow);
 });
 
-app.put("/workflows/:id", (req, res) => {
+app.put("/workflows/:id", requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
   const idx = workflows.findIndex((w) => w.id === req.params.id);
   if (idx === -1) return res.status(404).json({ message: "workflow not found" });
   const { name, nodes, edges, thumbnail } = req.body;
@@ -1662,9 +1939,13 @@ app.put("/workflows/:id", (req, res) => {
   const now = new Date().toISOString();
   const current = workflows[idx];
   if (!current) return res.status(404).json({ message: "workflow not found" });
+  if (current.ownerId && current.ownerId !== user.id && user.role !== "admin") {
+    return res.status(404).json({ message: "workflow not found" });
+  }
   const updated: WorkflowDefinition = {
     ...current,
     name,
+    ownerId: current.ownerId || user.id,
     nodes,
     edges,
     ...(thumbnail !== undefined ? { thumbnail } : {}),
@@ -1677,20 +1958,28 @@ app.put("/workflows/:id", (req, res) => {
   res.json(workflows[idx]);
 });
 
-app.get("/workflows/:id", (req, res) => {
+app.get("/workflows/:id", requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
   const workflow = workflows.find((w) => w.id === req.params.id);
   if (!workflow) {
+    return res.status(404).json({ message: "workflow not found" });
+  }
+  if (workflow.ownerId && workflow.ownerId !== user.id && user.role !== "admin") {
     return res.status(404).json({ message: "workflow not found" });
   }
   res.json(workflow);
 });
 
-app.delete("/workflows/:id", (req, res) => {
+app.delete("/workflows/:id", requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
   const idx = workflows.findIndex((w) => w.id === req.params.id);
   if (idx === -1) {
     return res.status(404).json({ message: "workflow not found" });
   }
   const workflow = workflows[idx];
+  if (workflow && workflow.ownerId && workflow.ownerId !== user.id && user.role !== "admin") {
+    return res.status(404).json({ message: "workflow not found" });
+  }
   workflows.splice(idx, 1);
   saveWorkflows();
   // 取消相关的定时任务和webhook
@@ -1705,16 +1994,27 @@ app.delete("/workflows/:id", (req, res) => {
   res.json({ message: "workflow deleted", id: req.params.id });
 });
 
-app.post("/workflows/:id/run", (req, res) => {
+app.post("/workflows/:id/run", requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
   const workflow = workflows.find((w) => w.id === req.params.id);
   if (!workflow) {
     return res.status(404).json({ message: "workflow not found" });
   }
-  const run = createRun(workflow, req.body?.context ?? {});
-  res.status(202).json({ runId: run.id, status: run.status });
+  if (workflow.ownerId && workflow.ownerId !== user.id && user.role !== "admin") {
+    return res.status(404).json({ message: "workflow not found" });
+  }
+  if (!consumeCredit(user.id, "运行工作流")) {
+    return res.status(400).json({ message: "Insufficient credits" });
+  }
+  const run = createRun(workflow, req.body?.context ?? {}, user.id);
+  res.status(202).json({ runId: run.id, status: run.status, credits: user.credits });
 });
 
-app.post("/nodes/run", async (req, res) => {
+app.post("/nodes/run", requireAuth, async (req: AuthRequest, res) => {
+  const user = req.user!;
+  if (!consumeCredit(user.id, "运行单节点")) {
+    return res.status(400).json({ message: "Insufficient credits" });
+  }
   const node = req.body?.node as WorkflowNode | undefined;
   const context = (req.body?.context ?? {}) as Record<string, unknown>;
   if (!node || !node.id || !node.type) {
@@ -1724,6 +2024,7 @@ app.post("/nodes/run", async (req, res) => {
   const run: WorkflowRun = {
     id: uuidv4(),
     workflowId: "single-node",
+    ownerId: user.id,
     status: "running",
     context,
     logs: [{ ts: now, level: "info", message: "Single node run" }],
@@ -1738,20 +2039,28 @@ app.post("/nodes/run", async (req, res) => {
     logRun(run, "error", `Single node error: ${err.message}`);
   }
   const outputs = getByPath(context, `_outputs.${node.id}`) || {};
-  res.json({ status: run.status, outputs, logs: run.logs, context });
+  res.json({ status: run.status, outputs, logs: run.logs, context, credits: user.credits });
 });
 
-app.get("/runs/:id", (req, res) => {
+app.get("/runs/:id", requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
   const run = runs.find((r) => r.id === req.params.id);
   if (!run) {
+    return res.status(404).json({ message: "run not found" });
+  }
+  if (run.ownerId && run.ownerId !== user.id && user.role !== "admin") {
     return res.status(404).json({ message: "run not found" });
   }
   res.json(run);
 });
 
-app.get("/runs/:id/logs", (req, res) => {
+app.get("/runs/:id/logs", requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
   const run = runs.find((r) => r.id === req.params.id);
   if (!run) {
+    return res.status(404).json({ message: "run not found" });
+  }
+  if (run.ownerId && run.ownerId !== user.id && user.role !== "admin") {
     return res.status(404).json({ message: "run not found" });
   }
   res.json({ runId: run.id, logs: run.logs, status: run.status, context: run.context });
@@ -1767,6 +2076,8 @@ app.post("/triggers/webhook/:key", (req, res) => {
   workflowIds.forEach((id) => {
     const workflow = workflows.find((w) => w.id === id);
     if (!workflow) return;
+    if (!workflow.ownerId) return;
+    if (!consumeCredit(workflow.ownerId, "Webhook 触发")) return;
     const context = {
       webhook: {
         key,
@@ -1776,13 +2087,13 @@ app.post("/triggers/webhook/:key", (req, res) => {
         query: req.query,
       },
     };
-    const run = createRun(workflow, context);
+    const run = createRun(workflow, context, workflow.ownerId);
     runsTriggered.push(run.id);
   });
   res.json({ key, runs: runsTriggered });
 });
 
-app.post("/providers", (req, res) => {
+app.post("/providers", requireAuth, (req, res) => {
   const { name, baseURL, model, apiKeyAlias, description } = req.body;
   if (!name || !baseURL || !model || !apiKeyAlias) {
     return res
@@ -1804,11 +2115,11 @@ app.post("/providers", (req, res) => {
   res.status(201).json(provider);
 });
 
-app.get("/providers", (_req, res) => {
+app.get("/providers", requireAuth, (_req, res) => {
   res.json({ items: providers });
 });
 
-app.post("/uploads", upload.array("files", 5), (req: Request, res: Response) => {
+app.post("/uploads", requireAuth, upload.array("files", 5), (req: Request, res: Response) => {
   const files = (req.files as Express.Multer.File[]) ?? [];
   const mapped = files.map((file) => ({
     id: uuidv4(),

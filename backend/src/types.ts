@@ -43,6 +43,7 @@ export type WorkflowDefinition = {
   id: string;
   name: string;
   version: number;
+  ownerId: string;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   thumbnail?: string;
@@ -57,11 +58,52 @@ export type RunLog = { ts: string; level: "info" | "error"; message: string };
 export type WorkflowRun = {
   id: string;
   workflowId: string;
+  ownerId: string;
   status: RunStatus;
   context: Record<string, unknown>;
   logs: RunLog[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type UserRole = "user" | "admin";
+
+export type UserProfile = {
+  avatarUrl?: string;
+  bio?: string;
+};
+
+export type User = {
+  id: string;
+  username: string;
+  email: string;
+  passwordHash: string;
+  passwordSalt: string;
+  role: UserRole;
+  credits: number;
+  usedCredits: number;
+  profile: UserProfile;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Session = {
+  token: string;
+  userId: string;
+  createdAt: string;
+  lastUsedAt: string;
+};
+
+export type CreditLogType = "consume" | "admin_add";
+
+export type CreditLog = {
+  id: string;
+  userId: string;
+  type: CreditLogType;
+  amount: number;
+  reason: string;
+  balanceAfter: number;
+  createdAt: string;
 };
 
 export type ProviderConfig = {

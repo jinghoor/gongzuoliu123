@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import "./HomePage.css";
-
-const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:1888";
+import { apiBase, apiFetch } from "./api";
+import { useAuth } from "./auth";
 
 type Workflow = {
   id: string;
@@ -15,6 +15,7 @@ type Workflow = {
 const AllProjectsPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, logout } = useAuth();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -27,7 +28,7 @@ const AllProjectsPage = () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await fetch(`${apiBase}/workflows`, { cache: "no-store" });
+      const res = await apiFetch("/workflows", { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to fetch workflows");
       const data = await res.json();
       const items = data.items || [];
@@ -70,14 +71,13 @@ const AllProjectsPage = () => {
     if (!newName.trim()) return;
     try {
       // 先获取完整的工作流
-      const res = await fetch(`${apiBase}/workflows/${id}`);
+      const res = await apiFetch(`/workflows/${id}`);
       if (!res.ok) throw new Error("Failed to fetch workflow");
       const workflow = await res.json();
       
       // 更新名称
-      const updateRes = await fetch(`${apiBase}/workflows/${id}`, {
+      const updateRes = await apiFetch(`/workflows/${id}`, {
         method: "PUT",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           name: newName.trim(),
           nodes: workflow.nodes,
@@ -96,14 +96,13 @@ const AllProjectsPage = () => {
   const handleCopy = async (id: string) => {
     try {
       // 获取工作流
-      const res = await fetch(`${apiBase}/workflows/${id}`);
+      const res = await apiFetch(`/workflows/${id}`);
       if (!res.ok) throw new Error("Failed to fetch workflow");
       const workflow = await res.json();
       
       // 创建副本
-      const copyRes = await fetch(`${apiBase}/workflows`, {
+      const copyRes = await apiFetch("/workflows", {
         method: "POST",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           name: `${workflow.name} (副本)`,
           nodes: workflow.nodes,
@@ -130,9 +129,8 @@ const AllProjectsPage = () => {
     if (!deleteTarget || isDeleting) return;
     setIsDeleting(true);
     try {
-      const res = await fetch(`${apiBase}/workflows/${deleteTarget.id}`, {
+      const res = await apiFetch(`/workflows/${deleteTarget.id}`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
       });
       if (!res.ok) {
         const errorText = await res.text();
@@ -185,9 +183,28 @@ const AllProjectsPage = () => {
           </select>
           <button className="nav-icon-btn">🔔</button>
           <button className="nav-upgrade-btn">
-            ⚡ 升级 <span className="upgrade-points">12,097</span>
+            ⚡ 积分 <span className="upgrade-points">{user?.credits ?? 0}</span>
           </button>
-          <div className="nav-avatar">👤</div>
+          <div className="nav-avatar nav-avatar-menu">
+            <div className="nav-avatar-circle">👤</div>
+            <div className="nav-avatar-dropdown">
+              <div className="nav-avatar-name">{user?.username || "未登录"}</div>
+              <div className="nav-avatar-email">{user?.email || ""}</div>
+              <div className="nav-avatar-actions">
+                <Link to="/profile">个人资料</Link>
+                {user?.role === "admin" && <Link to="/admin">用户管理</Link>}
+                <button
+                  type="button"
+                  onClick={() => {
+                    logout();
+                    navigate("/login");
+                  }}
+                >
+                  退出登录
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
