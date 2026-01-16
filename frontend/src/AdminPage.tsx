@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "./api";
-import { User, useAuth } from "./auth";
+import { useAuth } from "./auth";
+import type { User } from "./auth";
 import "./Auth.css";
 
 type AdminRow = User;

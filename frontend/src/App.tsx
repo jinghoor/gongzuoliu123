@@ -26,6 +26,7 @@ import AdminPage from "./AdminPage";
 import ProtectedRoute from "./ProtectedRoute";
 import { apiBase, apiFetch } from "./api";
 import { useAuth } from "./auth";
+import type { User } from "./auth";
 
 type PaletteItem = {
   type: string;
@@ -1693,7 +1694,7 @@ const WorkflowEditor = () => {
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       if (typeof data.credits === "number") {
-        setUser((prev) => (prev ? { ...prev, credits: data.credits } : prev));
+        setUser((prev: User | null) => (prev ? { ...prev, credits: data.credits } : prev));
       }
       const outputText = JSON.stringify(data.outputs || data.context || {}, null, 2);
       setNodeRunResult(outputText);
@@ -1729,7 +1730,7 @@ const WorkflowEditor = () => {
       setRunStatus(data.status);
       setRunMessage(`运行已提交: ${data.runId}`);
       if (typeof data.credits === "number") {
-        setUser((prev) => (prev ? { ...prev, credits: data.credits } : prev));
+        setUser((prev: User | null) => (prev ? { ...prev, credits: data.credits } : prev));
       }
     } catch (err: any) {
       setRunMessage(`运行失败: ${err.message}`);
