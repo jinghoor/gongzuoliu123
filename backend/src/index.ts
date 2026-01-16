@@ -973,14 +973,13 @@ const executeNode = async (
       const rawBaseURL = (effectiveConfig.baseURL as string) || "https://api.openai.com/v1";
       const baseURL = rawBaseURL.replace(/\/+$/, ""); // 去掉末尾多余的 /
       const model = (effectiveConfig.model as string) || "gpt-4o-mini";
+      // 检测是否是 Doubao 模型（通过模型名称或 baseURL）
+      const isDoubao = /doubao/i.test(model) || /volces\.com/i.test(baseURL);
       const apiKey =
         (effectiveConfig.apiKey as string) ||
         (isDoubao ? process.env.DOUBAO_API_KEY : undefined) ||
         process.env.OPENAI_API_KEY ||
         process.env.DEFAULT_OPENAI_KEY;
-
-      // 检测是否是 Doubao 模型（通过模型名称或 baseURL）
-      const isDoubao = /doubao/i.test(model) || /volces\.com/i.test(baseURL);
       // 检测是否是 Doubao-Seed-1.8 模型（需要分离 Thinking 和 Answer）
       const isDoubaoSeed = /doubao-seed-1-8/i.test(model);
       
