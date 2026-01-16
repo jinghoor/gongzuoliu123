@@ -133,7 +133,7 @@ const splitImageRows = (images: string[]) => {
 
 function DefaultNode(props: NodeProps<NodeData>) {
   const { id, data, selected } = props;
-  const { setNodes } = useReactFlow();
+  const { setNodes, getNode } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const cardRef = useRef<HTMLDivElement | null>(null);
   const GRID_SIZE = 20;
@@ -270,6 +270,8 @@ function DefaultNode(props: NodeProps<NodeData>) {
   // 当 Doubao-Seed 节点的折叠状态改变时，自动调整节点高度（基于内容自适应）
   useEffect(() => {
     if (!isDoubaoSeed) return;
+    const currentHeight = (getNode(id)?.style as any)?.height;
+    if (currentHeight === undefined || currentHeight === null) return;
     // 清除显式高度，让 React Flow 基于内容重新测量
     setNodes((nds) =>
       nds.map((n) => {
@@ -290,10 +292,13 @@ function DefaultNode(props: NodeProps<NodeData>) {
     rowCount,
     setNodes,
     updateNodeInternals,
+    getNode,
   ]);
 
   useEffect(() => {
     if (!isTextOutput && !isImageOutput && !hasImageInput) return;
+    const currentHeight = (getNode(id)?.style as any)?.height;
+    if (currentHeight === undefined || currentHeight === null) return;
     setNodes((nds) => {
       let changed = false;
       const next = nds.map((n) => {
